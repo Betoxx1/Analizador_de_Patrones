@@ -1,0 +1,28 @@
+{
+  "name": "analizador-patrones",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sistema de análisis de patrones de cobranza con Neo4j y Graphiti",
+  "private": true,
+  "workspaces": [
+    "ingest",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev:api": "pnpm --filter api run dev",
+    "dev:web": "pnpm --filter web run dev",
+    "ingest": "pnpm --filter ingest run start",
+    "build": "pnpm --filter ingest run build && pnpm --filter api run build && pnpm --filter web run build",
+    "build:ingest": "pnpm --filter ingest run build",
+    "build:api": "pnpm --filter api run build",
+    "build:web": "pnpm --filter web run build"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

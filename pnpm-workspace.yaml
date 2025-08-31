@@ -1,0 +1,4 @@
+packages:
+  - 'ingest'
+  - 'api'
+  - 'web'

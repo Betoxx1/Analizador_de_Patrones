@@ -1,0 +1,21 @@
+{
+  "name": "graphiti-testing",
+  "version": "1.0.0",
+  "description": "Testing suite para Graphiti SearchGraph",
+  "type": "module",
+  "scripts": {
+    "test": "tsx test-searchGraph.ts",
+    "test:quick": "tsx test-searchGraph.ts --quick",
+    "test:verbose": "tsx test-searchGraph.ts --verbose",
+    "health": "tsx health-check.ts",
+    "single": "tsx single-test.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.0.0",
+    "ofetch": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

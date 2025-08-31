@@ -1,0 +1,701 @@
+import React, { useState, useEffect } from 'react';
+import KPICard from '../components/KPICard';
+import SystemStatus from '../components/SystemStatus';
+
+// Interfaces para los nuevos datos del API
+interface DashboardKPIs {
+  tasa_recuperacion: {
+    valor: number;
+    delta_periodo_anterior: number;
+    periodo_anterior: number;
+  };
+  promesas_cumplidas: {
+    valor: number;
+    delta_periodo_anterior: number;
+    total_promesas: number;
+  };
+  promesas_incumplidas: {
+    valor: number;
+    delta_periodo_anterior: number;
+    monto_total: number;
+  };
+  contactabilidad: {
+    valor: number;
+    delta_periodo_anterior: number;
+    intentos_total: number;
+    respuestas_total: number;
+  };
+  tiempo_medio_primer_contacto: {
+    valor: number; // en horas
+    delta_periodo_anterior: number;
+  };
+  pago_medio_cliente: {
+    valor: number;
+    delta_periodo_anterior: number;
+    ticket_mas_alto: number;
+  };
+  pago_completo_porcentaje: {
+    valor: number;
+    delta_periodo_anterior: number;
+    total_pagos: number;
+    pagos_completos: number;
+  };
+  clientes_riesgo: {
+    valor: number;
+    delta_periodo_anterior: number;
+    criterio: string;
+  };
+}
+
+interface ActivityData {
+  fecha: string;
+  interacciones: {
+    llamadas_salientes: number;
+    llamadas_entrantes: number;
+    sms: number;
+    email: number;
+    pagos: number;
+  };
+  tasa_exito: number;
+  flujo_pagos: number;
+}
+
+interface DebtDistribution {
+  tipo_deuda: string;
+  clientes_count: number;
+  monto_total: number;
+  porcentaje: number;
+}
+
+interface BestHoursData {
+  dia_semana: string;
+  hora: number;
+  contact_rate: number;
+  success_rate: number;
+  duracion_media: number;
+  total_llamadas: number;
+  llamadas_con_respuesta: number;
+}
+
+interface FunnelData {
+  etapa: string;
+  count: number;
+  conversion_porcentaje: number;
+  drop_off: number;
+}
+
+interface AgentEffectiveness {
+  agente_id: string;
+  nombre: string;
+  promesas_por_100_llamadas: number;
+  promesas_cumplidas_porcentaje: number;
+  monto_recuperado: number;
+  tiempo_medio_llamada: number;
+  sentimiento_promedio: string;
+}
+
+interface PromiseRisk {
+  promesa_id: string;
+  cliente_id: string;
+  cliente_nombre: string;
+  monto_prometido: number;
+  fecha_promesa: string;
+  estado: 'proxima_vencer' | 'vencida' | 'cumplida';
+  dias_restantes?: number;
+  dias_vencida?: number;
+}
+
+interface SentimentData {
+  fecha: string;
+  cooperativo: number;
+  neutral: number;
+  frustrado: number;
+  hostil: number;
+  total: number;
+}
+
+interface DashboardData {
+  kpis: DashboardKPIs;
+  actividad: ActivityData[];
+  distribucion_deuda: DebtDistribution[];
+  mejores_horarios: BestHoursData[];
+  embudo: FunnelData[];
+  agentes: AgentEffectiveness[];
+  promesas_riesgo: PromiseRisk[];
+  sentimiento: SentimentData[];
+  periodo: {
+    desde: string;
+    hasta: string;
+    dias: number;
+  };
+}
+
+const Dashboard: React.FC = () => {
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [filtros, setFiltros] = useState({
+    desde: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 días atrás
+    hasta: new Date().toISOString().split('T')[0], // hoy
+    tipo_deuda: 'todos',
+    agente_id: 'todos'
+  });
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [filtros]);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch KPIs
+      const kpisResponse = await fetch(
+        `http://localhost:3000/api/dashboard/kpis?desde=${filtros.desde}&hasta=${filtros.hasta}&tipo_deuda=${filtros.tipo_deuda}&agente_id=${filtros.agente_id}`
+      );
+
+      if (!kpisResponse.ok) {
+        throw new Error(`Error ${kpisResponse.status}: ${kpisResponse.statusText}`);
+      }
+
+      const kpisData = await kpisResponse.json();
+
+      // Fetch Activity
+      const activityResponse = await fetch(
+        `http://localhost:3000/api/dashboard/activity?desde=${filtros.desde}&hasta=${filtros.hasta}&groupBy=day`
+      );
+
+      if (!activityResponse.ok) {
+        throw new Error(`Error ${activityResponse.status}: ${activityResponse.statusText}`);
+      }
+
+      const activityData = await activityResponse.json();
+
+      // Fetch Best Hours
+      const bestHoursResponse = await fetch(
+        `http://localhost:3000/api/dashboard/best-hours?desde=${filtros.desde}&hasta=${filtros.hasta}&tipo_deuda=${filtros.tipo_deuda}&agente_id=${filtros.agente_id}`
+      );
+
+      if (!bestHoursResponse.ok) {
+        throw new Error(`Error ${bestHoursResponse.status}: ${bestHoursResponse.statusText}`);
+      }
+
+      const bestHoursData = await bestHoursResponse.json();
+
+      // Fetch Funnel
+      const funnelResponse = await fetch(
+        `http://localhost:3000/api/dashboard/funnel?desde=${filtros.desde}&hasta=${filtros.hasta}`
+      );
+
+      if (!funnelResponse.ok) {
+        throw new Error(`Error ${funnelResponse.status}: ${funnelResponse.statusText}`);
+      }
+
+      const funnelData = await funnelResponse.json();
+
+      // Fetch Agents
+      const agentsResponse = await fetch(
+        `http://localhost:3000/api/dashboard/agents?desde=${filtros.desde}&hasta=${filtros.hasta}&sort=promesas_por_100_llamadas`
+      );
+
+      if (!agentsResponse.ok) {
+        throw new Error(`Error ${agentsResponse.status}: ${agentsResponse.statusText}`);
+      }
+
+      const agentsData = await agentsResponse.json();
+
+      // Fetch Promises Risk
+      const promisesResponse = await fetch(
+        `http://localhost:3000/api/dashboard/promises/upcoming?withinHours=72`
+      );
+
+      if (!promisesResponse.ok) {
+        throw new Error(`Error ${promisesResponse.status}: ${promisesResponse.statusText}`);
+      }
+
+      const promisesData = await promisesResponse.json();
+
+      // Fetch Sentiment
+      const sentimentResponse = await fetch(
+        `http://localhost:3000/api/dashboard/sentiment?desde=${filtros.desde}&hasta=${filtros.hasta}`
+      );
+
+      if (!sentimentResponse.ok) {
+        throw new Error(`Error ${sentimentResponse.status}: ${sentimentResponse.statusText}`);
+      }
+
+      const sentimentData = await sentimentResponse.json();
+
+      // Combinar todos los datos
+      const combinedData: DashboardData = {
+        kpis: kpisData,
+        actividad: activityData,
+        mejores_horarios: bestHoursData,
+        embudo: funnelData,
+        agentes: agentsData,
+        promesas_riesgo: promisesData,
+        sentimiento: sentimentData,
+        distribucion_deuda: [], // TODO: Implementar cuando esté disponible
+        periodo: {
+          desde: filtros.desde,
+          hasta: filtros.hasta,
+          dias: Math.ceil((new Date(filtros.hasta).getTime() - new Date(filtros.desde).getTime()) / (1000 * 60 * 60 * 24))
+        }
+      };
+
+      setDashboardData(combinedData);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setError(err instanceof Error ? err.message : 'Error desconocido');
+      setDashboardData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('es-PA', {
+      style: 'currency',
+      currency: 'PAB'
+    }).format(amount);
+  };
+
+  const formatPercentage = (value: number): string => {
+    return `${value.toFixed(1)}%`;
+  };
+
+  const formatDelta = (delta: number): string => {
+    if (delta > 0) return `↑ +${formatPercentage(delta)}`;
+    if (delta < 0) return `↓ ${formatPercentage(Math.abs(delta))}`;
+    return '→ 0%';
+  };
+
+  const formatTime = (hours: number): string => {
+    if (hours < 24) return `${hours.toFixed(1)}h`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `${days}d ${remainingHours.toFixed(1)}h`;
+  };
+
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '400px'
+      }}>
+        <div style={{
+          fontSize: '2rem',
+          color: '#3498db'
+        }}>
+          ⏳ Cargando dashboard...
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !dashboardData) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '400px',
+        flexDirection: 'column',
+        gap: '1rem'
+      }}>
+        <div style={{
+          fontSize: '2rem',
+          color: '#e74c3c'
+        }}>
+          ❌ Error cargando dashboard
+        </div>
+        <div style={{
+          color: '#7f8c8d',
+          fontSize: '1.1rem'
+        }}>
+          {error || 'No se pudieron cargar los datos'}
+        </div>
+        <button 
+          onClick={fetchDashboardData}
+          style={{
+            padding: '0.5rem 1rem',
+            background: '#3498db',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}
+        >
+          🔄 Reintentar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Header con filtros */}
+      <div style={{
+        marginBottom: '2rem',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '1rem'
+      }}>
+        <div>
+          <h1 style={{
+            color: '#2c3e50',
+            fontSize: '2.5rem',
+            margin: '0 0 0.5rem 0'
+          }}>
+            📊 Dashboard de Cobranza
+          </h1>
+          <p style={{
+            color: '#7f8c8d',
+            fontSize: '1.1rem',
+            margin: 0
+          }}>
+            Período: {dashboardData.periodo.desde} a {dashboardData.periodo.hasta} ({dashboardData.periodo.dias} días)
+          </p>
+        </div>
+
+        {/* Filtros */}
+        <div style={{
+          display: 'flex',
+          gap: '1rem',
+          alignItems: 'center'
+        }}>
+          <input
+            type="date"
+            value={filtros.desde}
+            onChange={(e) => setFiltros(prev => ({ ...prev, desde: e.target.value }))}
+            style={{
+              padding: '0.5rem',
+              border: '1px solid #ddd',
+              borderRadius: '4px'
+            }}
+          />
+          <span>a</span>
+          <input
+            type="date"
+            value={filtros.hasta}
+            onChange={(e) => setFiltros(prev => ({ ...prev, hasta: e.target.value }))}
+            style={{
+              padding: '0.5rem',
+              border: '1px solid #ddd',
+              borderRadius: '4px'
+            }}
+          />
+          <select
+            value={filtros.tipo_deuda}
+            onChange={(e) => setFiltros(prev => ({ ...prev, tipo_deuda: e.target.value }))}
+            style={{
+              padding: '0.5rem',
+              border: '1px solid #ddd',
+              borderRadius: '4px'
+            }}
+          >
+            <option value="todos">Todos los tipos de deuda</option>
+            <option value="tarjeta">Tarjeta</option>
+            <option value="personal">Personal</option>
+            <option value="hipoteca">Hipoteca</option>
+            <option value="auto">Auto</option>
+          </select>
+        </div>
+      </div>
+
+      {/* KPIs Principales */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: '1.5rem',
+        marginBottom: '2rem'
+      }}>
+        <KPICard
+          title="Tasa de Recuperación"
+          value={formatPercentage(dashboardData.kpis.tasa_recuperacion.valor)}
+          subtitle={`vs período anterior: ${formatDelta(dashboardData.kpis.tasa_recuperacion.delta_periodo_anterior)}`}
+          icon="💰"
+          color="#27ae60"
+        />
+        
+        <KPICard
+          title="Promesas Cumplidas"
+          value={formatPercentage(dashboardData.kpis.promesas_cumplidas.valor)}
+          subtitle={`${dashboardData.kpis.promesas_cumplidas.total_promesas} promesas totales`}
+          icon="✅"
+          color="#2ecc71"
+        />
+        
+        <KPICard
+          title="Promesas Incumplidas"
+          value={dashboardData.kpis.promesas_incumplidas.valor.toString()}
+          subtitle={`${formatCurrency(dashboardData.kpis.promesas_incumplidas.monto_total)} en riesgo`}
+          icon="⚠️"
+          color="#e74c3c"
+        />
+        
+        <KPICard
+          title="Contactabilidad"
+          value={formatPercentage(dashboardData.kpis.contactabilidad.valor)}
+          subtitle={`${dashboardData.kpis.contactabilidad.respuestas_total}/${dashboardData.kpis.contactabilidad.intentos_total} respuestas`}
+          icon="📞"
+          color="#3498db"
+        />
+        
+        <KPICard
+          title="Tiempo Medio 1er Contacto"
+          value={formatTime(dashboardData.kpis.tiempo_medio_primer_contacto.valor)}
+          subtitle={`vs período anterior: ${formatDelta(dashboardData.kpis.tiempo_medio_primer_contacto.delta_periodo_anterior)}`}
+          icon="⏱️"
+          color="#9b59b6"
+        />
+        
+        <KPICard
+          title="Pago Medio por Cliente"
+          value={formatCurrency(dashboardData.kpis.pago_medio_cliente.valor)}
+          subtitle={`Ticket más alto: ${formatCurrency(dashboardData.kpis.pago_medio_cliente.ticket_mas_alto)}`}
+          icon="💳"
+          color="#f39c12"
+        />
+        
+        <KPICard
+          title="% Pago Completo"
+          value={formatPercentage(dashboardData.kpis.pago_completo_porcentaje.valor)}
+          subtitle={`${dashboardData.kpis.pago_completo_porcentaje.pagos_completos}/${dashboardData.kpis.pago_completo_porcentaje.total_pagos} pagos`}
+          icon="🎯"
+          color="#1abc9c"
+        />
+        
+        <KPICard
+          title="Clientes en Riesgo"
+          value={dashboardData.kpis.clientes_riesgo.valor.toString()}
+          subtitle={`Criterio: ${dashboardData.kpis.clientes_riesgo.criterio}`}
+          icon="🚨"
+          color="#e67e22"
+        />
+      </div>
+
+      {/* Gráficos y Widgets */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '2fr 1fr',
+        gap: '2rem',
+        marginBottom: '2rem'
+      }}>
+        {/* Actividad por Tiempo */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{
+            color: '#2c3e50',
+            margin: '0 0 1rem 0',
+            fontSize: '1.3rem'
+          }}>
+            📈 Actividad por Tiempo
+          </h3>
+          <div style={{
+            height: '300px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#7f8c8d',
+            border: '2px dashed #ddd',
+            borderRadius: '8px'
+          }}>
+            Gráfico de actividad por día (implementar con Chart.js o similar)
+          </div>
+        </div>
+
+        {/* Embudo de Cobranza */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{
+            color: '#2c3e50',
+            margin: '0 0 1rem 0',
+            fontSize: '1.3rem'
+          }}>
+            🎯 Embudo de Cobranza
+          </h3>
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {dashboardData.embudo.map((etapa, index) => (
+              <div key={etapa.etapa} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.5rem',
+                backgroundColor: index === 0 ? '#e8f5e8' : '#f8f9fa',
+                borderRadius: '4px'
+              }}>
+                <span style={{ fontWeight: 500 }}>{etapa.etapa}</span>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 'bold' }}>{etapa.count}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                    {etapa.conversion_porcentaje}% conversión
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Mejores Horarios */}
+      <div style={{
+        backgroundColor: 'white',
+        borderRadius: '8px',
+        padding: '1.5rem',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+        marginBottom: '2rem'
+      }}>
+        <h3 style={{
+          color: '#2c3e50',
+          margin: '0 0 1rem 0',
+          fontSize: '1.3rem'
+        }}>
+          🕐 Mejores Horarios para Contacto
+        </h3>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '1rem'
+        }}>
+          {dashboardData.mejores_horarios.slice(0, 8).map((slot, index) => (
+            <div key={`${slot.dia_semana}-${slot.hora}-${index}`} style={{
+              padding: '1rem',
+              backgroundColor: index < 3 ? '#f8f9fa' : '#ffffff',
+              border: index < 3 ? '2px solid #28a745' : '1px solid #dee2e6',
+              borderRadius: '6px',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                {slot.dia_semana.charAt(0).toUpperCase() + slot.dia_semana.slice(1)} {slot.hora}:00
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#666', marginBottom: '0.5rem' }}>
+                Contact Rate: {formatPercentage(slot.contact_rate)}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: '#666' }}>
+                Success Rate: {formatPercentage(slot.success_rate)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Agentes y Promesas en Riesgo */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '2rem',
+        marginBottom: '2rem'
+      }}>
+        {/* Efectividad de Agentes */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{
+            color: '#2c3e50',
+            margin: '0 0 1rem 0',
+            fontSize: '1.3rem'
+          }}>
+            👥 Efectividad de Agentes
+          </h3>
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {dashboardData.agentes.slice(0, 5).map((agente, index) => (
+              <div key={`agente-${agente.agente_id || 'N/A'}-${index}`} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.5rem',
+                backgroundColor: index === 0 ? '#e8f5e8' : '#f8f9fa',
+                borderRadius: '4px'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 'bold' }}>{agente.nombre || `Agente ${agente.agente_id || 'N/A'}`}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                    {formatPercentage(agente.promesas_cumplidas_porcentaje)} cumplidas
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontWeight: 'bold' }}>{formatCurrency(agente.monto_recuperado)}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                    {agente.promesas_por_100_llamadas} promesas/100 llamadas
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Promesas en Riesgo */}
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{
+            color: '#2c3e50',
+            margin: '0 0 1rem 0',
+            fontSize: '1.3rem'
+          }}>
+            ⚠️ Promesas en Riesgo
+          </h3>
+          <div style={{ display: 'grid', gap: '0.5rem' }}>
+            {dashboardData.promesas_riesgo.slice(0, 5).map((promesa) => (
+              <div key={`promesa-${promesa.promesa_id || 'N/A'}-${index}`} style={{
+                padding: '0.5rem',
+                backgroundColor: promesa.estado === 'vencida' ? '#fee2e2' : '#fef3c7',
+                borderRadius: '4px',
+                border: promesa.estado === 'vencida' ? '1px solid #fecaca' : '1px solid #fde68a'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>{promesa.cliente_nombre}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>
+                      {formatCurrency(promesa.monto_prometido)} - {promesa.fecha_promesa}
+                    </div>
+                  </div>
+                  <div style={{
+                    padding: '0.25rem 0.5rem',
+                    backgroundColor: promesa.estado === 'vencida' ? '#ef4444' : '#f59e0b',
+                    color: 'white',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: 'bold'
+                  }}>
+                    {promesa.estado === 'vencida' 
+                      ? `Vencida ${promesa.dias_vencida}d` 
+                      : `Vence en ${promesa.dias_restantes}h`
+                    }
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* System Status */}
+      <div style={{ marginBottom: '2rem' }}>
+        <SystemStatus />
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
