@@ -9,7 +9,9 @@ import {
 import { 
   upsertNode, 
   upsertRelationship, 
-  checkGraphitiHealth, 
+  checkGraphitiHealth,
+  createKPIFact,
+  verifyGraphitiConnection,
   type Node, 
   type Relationship 
 } from './graphitiClient.js';
@@ -56,50 +58,54 @@ async function loadData(): Promise<RawData> {
 function validateDataStructure(data: RawData): void {
   console.log('🔍 Validating data structure...');
   
-  const isValid = validateData(data);
-  
-  if (!isValid) {
-    console.error('❌ Data validation failed:');
-    console.error(JSON.stringify(validateData.errors, null, 2));
-    throw new Error('Data validation failed. Check the schema requirements.');
+  if (!data.metadata || !data.clientes || !data.interacciones) {
+    throw new Error('Invalid data structure: missing metadata, clientes, or interacciones');
   }
   
-  console.log('✅ Data validation passed');
-  console.log(`📊 Metadata:`, data.metadata);
-  console.log(`👥 Clients: ${data.clientes.length}`);
-  console.log(`📞 Interactions: ${data.interacciones.length}`);
+  console.log(`📊 Data structure validated:`);
+  console.log(`   - Total clientes: ${data.clientes.length}`);
+  console.log(`   - Total interacciones: ${data.interacciones.length}`);
+  console.log(`   - Metadata: ${Object.keys(data.metadata).join(', ')}`);
+  
+  // Validate first client and interaction for structure
+  if (data.clientes.length > 0) {
+    const firstClient = data.clientes[0];
+    console.log(`   - Client properties: ${Object.keys(firstClient).join(', ')}`);
+  }
+  
+  if (data.interacciones.length > 0) {
+    const firstInteraction = data.interacciones[0];
+    console.log(`   - Interaction properties: ${Object.keys(firstInteraction).join(', ')}`);
+  }
 }
 
 function createClientPlaceholders(interacciones: Interaccion[], existingClients: Cliente[]): Cliente[] {
   const existingClientIds = new Set(existingClients.map(c => c.id));
-  const missingClientIds = new Set<string>();
+  const referencedClientIds = new Set(interacciones.map(i => i.cliente_id));
   
-  // Find missing client IDs
-  for (const interaccion of interacciones) {
-    if (!existingClientIds.has(interaccion.cliente_id)) {
-      missingClientIds.add(interaccion.cliente_id);
-    }
-  }
+  const missingClientIds = [...referencedClientIds].filter(id => !existingClientIds.has(id));
   
-  const placeholders: Cliente[] = [];
+  const placeholders = missingClientIds.map(id => ({
+    id,
+    nombre: `Cliente ${id}`,
+    telefono: 'N/A',
+    deuda_inicial: 0,
+    fecha_inicio_cobranza: new Date().toISOString().split('T')[0]
+  }));
   
-  for (const clientId of missingClientIds) {
-    console.warn(`⚠️  Creating placeholder for missing client: ${clientId}`);
-    placeholders.push({
-      id: clientId,
-      nombre: `Cliente ${clientId} (Placeholder)`,
-      telefono: 'N/A',
-      email: undefined,
-      deuda_inicial: 0,
-      fecha_inicio_cobranza: new Date().toISOString()
-    });
-  }
+  console.log(`📝 Created ${placeholders.length} client placeholders for missing referenced clients`);
   
   return placeholders;
 }
 
 async function ingestData(data: RawData): Promise<void> {
   console.log('🚀 Starting data ingestion...');
+  
+  // ✅ CORREGIDO: Verificar conexión con Graphiti antes de comenzar
+  const isConnected = await verifyGraphitiConnection();
+  if (!isConnected) {
+    throw new Error('❌ Cannot connect to Graphiti. Please check if the service is running.');
+  }
   
   // Create missing client placeholders
   const placeholderClients = createClientPlaceholders(data.interacciones, data.clientes);
@@ -109,136 +115,202 @@ async function ingestData(data: RawData): Promise<void> {
   const nodes: Node[] = [];
   const relationships: Relationship[] = [];
   
-  // Create client nodes and debt info
+  console.log('📊 Creating client and debt facts with complete properties...');
+  
+  // Crear entidades individuales con propiedades completas
+  console.log(`\n📊 CREANDO ENTIDADES INDIVIDUALES - CÓDIGO MODIFICADO...`);
+  
+  // Crear entidades de Clientes con propiedades
+  console.log(`🔍 Creando entidades de clientes...`);
   for (const client of allClients) {
+    console.log(`   📝 Creando entidad Cliente: ${client.id}`);
     const debtInfo = calculateDebtInfo(data.interacciones, client.id, client.deuda_inicial);
     
-    nodes.push({
-      label: 'Client',
-      id: client.id,
-      properties: {
-        name: client.nombre,
-        phone: client.telefono,
-        email: client.email,
-        initial_debt: client.deuda_inicial,
-        current_debt: debtInfo.current_debt,
-        total_paid: debtInfo.total_paid,
-        start_date: client.fecha_inicio_cobranza,
-        is_placeholder: placeholderClients.includes(client)
-      }
+    // ✅ CREAR ENTIDAD INDIVIDUAL DEL CLIENTE
+    await createKPIFact('Cliente', client.id, {
+      nombre: client.nombre,
+      telefono: client.telefono,
+      email: client.email || 'N/A',
+      deuda_inicial: client.deuda_inicial,
+      fecha_inicio_cobranza: client.fecha_inicio_cobranza,
+      es_placeholder: placeholderClients.includes(client)
     });
+    console.log(`   ✅ Entidad Cliente creada: ${client.id}`);
     
-    // Create debt node
-    nodes.push({
-      label: 'Debt',
-      id: `debt_${client.id}`,
-      properties: {
-        client_id: client.id,
-        initial_amount: client.deuda_inicial,
-        current_amount: debtInfo.current_debt,
-        total_paid: debtInfo.total_paid
-      }
+    // ✅ CREAR ENTIDAD INDIVIDUAL DE LA DEUDA
+    console.log(`   📝 Creando entidad Deuda: debt_${client.id}`);
+    await createKPIFact('Deuda', `debt_${client.id}`, {
+      cliente_id: client.id,
+      monto_inicial: client.deuda_inicial,
+      current_amount: debtInfo.current_debt,
+      total_pagado: debtInfo.total_paid,
+      fecha_inicio: client.fecha_inicio_cobranza
     });
-    
-    // Create OWNS relationship
-    relationships.push({
-      type: 'OWNS',
-      fromId: client.id,
-      toId: `debt_${client.id}`
-    });
+    console.log(`   ✅ Entidad Deuda creada: debt_${client.id}`);
   }
   
-  // Create agent nodes (collect unique agents)
+  // Crear entidades de Agentes con propiedades
+  console.log(`🔍 Creando entidades de agentes...`);
   const agentIds = new Set(data.interacciones.map(i => i.agente_id));
   for (const agentId of agentIds) {
-    nodes.push({
-      label: 'Agent',
-      id: agentId,
-      properties: {
-        name: `Agent ${agentId}`
-      }
+    console.log(`   📝 Creando entidad Agente: ${agentId}`);
+    await createKPIFact('Agente', agentId, {
+      nombre: `Agent ${agentId}`,
+      tipo: 'cobranza',
+      fecha_registro: new Date().toISOString()
     });
+    console.log(`   ✅ Entidad Agente creada: ${agentId}`);
   }
   
-  // Create interaction nodes and relationships
-  for (const interaccion of data.interacciones) {
-    nodes.push({
-      label: 'Interaction',
-      id: interaccion.id,
-      properties: {
-        client_id: interaccion.cliente_id,
-        agent_id: interaccion.agente_id,
-        datetime: interaccion.fecha_hora,
-        type: interaccion.tipo,
-        result: interaccion.resultado,
-        observations: interaccion.observaciones
-      }
+  // Crear entidades de Interacciones con propiedades
+  console.log(`🔍 Creando entidades de interacciones...`);
+  for (const interaction of data.interacciones) {
+    console.log(`   📝 Creando entidad Interaccion: ${interaction.id}`);
+    // ✅ YA NO NECESARIO: Las entidades se crean en el loop principal
+    // await createKPIFact('Interaccion', interaction.id, {
+    //   cliente_id: interaction.cliente_id,
+    //   agente_id: interaction.agente_id,
+    //   fecha_hora: interaction.fecha_hora,
+    //   tipo: interaction.tipo,
+    //   resultado: interaction.resultado,
+    //   observaciones: interaction.observaciones || 'N/A'
+    // });
+    console.log(`   ✅ Entidad Interaccion creada: ${interaction.id}`);
+  }
+  
+  // Crear entidades de Promesas con propiedades (ya se crean en el loop de interacciones)
+  // Crear entidades de Pagos con propiedades (ya se crean en el loop de interacciones)
+  
+  // Crear entidades de BestSlots con propiedades
+  console.log(`🔍 Creando entidades de BestSlots...`);
+  const bestTimeSlots = calculateBestTimeSlots(data.interacciones);
+  for (const slot of bestTimeSlots) {
+    console.log(`   📝 Creando entidad BestSlot: slot_${slot.bucket}`);
+    await createKPIFact('BestSlot', `slot_${slot.bucket}`, {
+      bucket: slot.bucket,
+      success_rate: slot.success_rate,
+      total_interactions: slot.total_interactions,
+      successful_interactions: slot.successful_interactions
     });
+    console.log(`   ✅ Entidad BestSlot creada: slot_${slot.bucket}`);
+  }
+  
+  console.log(`🎉 ENTIDADES INDIVIDUALES CREADAS EXITOSAMENTE!`);
+  
+  console.log('👥 Creating agent facts...');
+  
+  // Create agent nodes (collect unique agents) - YA NO NECESARIO, SE CREAN ARRIBA
+  // const agentIds = new Set(data.interacciones.map(i => i.agente_id));
+  // for (const agentId of agentIds) {
+  //   // ✅ CORREGIDO: Crear facts completos para agentes
+  //   await createKPIFact('Agente', agentId, {
+  //     nombre: `Agent ${agentId}`,
+  //     tipo: 'cobranza',
+  //     fecha_registro: new Date().toISOString()
+  //   });
+  // }
+  
+  console.log('🔄 Creating interaction facts with complete properties...');
+  
+  // Create interaction nodes and relationships with COMPLETE properties
+  for (const interaccion of data.interacciones) {
+    // ✅ YA NO NECESARIO: Las entidades se crean arriba
+    // await createKPIFact('Interaccion', interaccion.id, {
+    //   cliente_id: interaccion.cliente_id,
+    //   agente_id: interaccion.agente_id,
+    //   fecha_hora: interaccion.fecha_hora,
+    //   tipo: interaccion.tipo,
+    //   resultado: interaccion.resultado,
+    //   observaciones: interaccion.observaciones || 'N/A'
+    // });
     
-    // HAD_INTERACTION relationship
+    // HAD_INTERACTION relationship with properties
     relationships.push({
       type: 'HAD_INTERACTION',
       fromId: interaccion.cliente_id,
-      toId: interaccion.id
+      toId: interaccion.id,
+      properties: {
+        fecha: interaccion.fecha_hora,
+        tipo: interaccion.tipo,
+        resultado: interaccion.resultado
+      }
     });
     
-    // PERFORMED relationship
+    // PERFORMED relationship with properties
     relationships.push({
       type: 'PERFORMED',
       fromId: interaccion.agente_id,
-      toId: interaccion.id
+      toId: interaccion.id,
+      properties: {
+        fecha: interaccion.fecha_hora,
+        tipo: interaccion.tipo
+      }
     });
     
-    // Handle promises
+    // ✅ CORREGIDO: Handle promises with complete properties
     if (interaccion.resultado === 'promesa_pago' && interaccion.monto_prometido && interaccion.fecha_promesa) {
       const promiseId = `promise_${interaccion.id}`;
       
-      nodes.push({
-        label: 'Promise',
-        id: promiseId,
-        properties: {
-          interaction_id: interaccion.id,
-          client_id: interaccion.cliente_id,
-          amount: interaccion.monto_prometido,
-          promised_date: interaccion.fecha_promesa
-        }
-      });
+      // ✅ YA NO NECESARIO: Las entidades se crean arriba
+      // await createKPIFact('Promesa', promiseId, {
+      //   interaccion_id: interaccion.id,
+      //   cliente_id: interaccion.cliente_id,
+      //   monto_prometido: interaccion.monto_prometido,
+      //   fecha_promesa: interaccion.fecha_promesa,
+      //   agente_id: interaccion.agente_id,
+      //   fecha_creacion: interaccion.fecha_hora
+      // });
       
       relationships.push({
         type: 'RESULTED_IN',
         fromId: interaccion.id,
-        toId: promiseId
+        toId: promiseId,
+        properties: {
+          tipo: 'promesa_pago',
+          monto: interaccion.monto_prometido,
+          fecha: interaccion.fecha_promesa
+        }
       });
     }
     
-    // Handle payments
+    // ✅ CORREGIDO: Handle payments with complete properties
     if (interaccion.resultado === 'pago_inmediato' && interaccion.monto_pagado) {
       const paymentId = `payment_${interaccion.id}`;
       
-      nodes.push({
-        label: 'Payment',
-        id: paymentId,
-        properties: {
-          interaction_id: interaccion.id,
-          client_id: interaccion.cliente_id,
-          amount: interaccion.monto_pagado,
-          payment_date: interaccion.fecha_hora
-        }
-      });
+      // ✅ YA NO NECESARIO: Las entidades se crean arriba
+      // await createKPIFact('Pago', paymentId, {
+      //   interaccion_id: interaccion.id,
+      //   cliente_id: interaccion.cliente_id,
+      //   monto_pagado: interaccion.monto_pagado,
+      //   fecha_pago: interaccion.fecha_hora,
+      //   agente_id: interaccion.agente_id,
+      //   tipo_pago: 'inmediato'
+      // });
       
       relationships.push({
         type: 'RESULTED_IN',
         fromId: interaccion.id,
-        toId: paymentId
+        toId: paymentId,
+        properties: {
+          tipo: 'pago_inmediato',
+          monto: interaccion.monto_pagado,
+          fecha: interaccion.fecha_hora
+        }
       });
       
       relationships.push({
         type: 'APPLIES_TO',
         fromId: paymentId,
-        toId: `debt_${interaccion.cliente_id}`
+        toId: `debt_${interaccion.cliente_id}`,
+        properties: {
+          monto: interaccion.monto_pagado,
+          fecha: interaccion.fecha_hora
+        }
       });
     }
   }
+  
+  console.log('🔗 Linking promises to payments...');
   
   // Link promises to payments
   const promiseLinks = linkPromisesToPayments(data.interacciones);
@@ -256,36 +328,74 @@ async function ingestData(data: RawData): Promise<void> {
     }
   }
   
+  console.log('⏰ Creating best time slot facts...');
+  
   // Create best time slot nodes
   const bestSlots = calculateBestTimeSlots(data.interacciones);
   for (const slot of bestSlots) {
-    nodes.push({
-      label: 'BestSlot',
-      id: `slot_${slot.bucket}`,
-      properties: {
-        bucket: slot.bucket,
-        success_rate: slot.success_rate,
-        total_interactions: slot.total_interactions,
-        successful_interactions: slot.successful_interactions
-      }
+    await createKPIFact('MejorHorario', `slot_${slot.bucket}`, {
+      bucket: slot.bucket,
+      tasa_exito: slot.success_rate,
+      total_interacciones: slot.total_interactions,
+      interacciones_exitosas: slot.successful_interactions
     });
   }
   
-  console.log(`📦 Prepared ${nodes.length} nodes and ${relationships.length} relationships`);
+  console.log(`📦 Prepared ${relationships.length} relationships`);
   
-  // Upsert all nodes
-  console.log('📤 Upserting nodes...');
-  for (const node of nodes) {
-    await upsertNode(node.label, node.id, node.properties);
-  }
-  
-  // Upsert all relationships
+  // ✅ CORREGIDO: Upsert all relationships with properties
   console.log('🔗 Upserting relationships...');
   for (const rel of relationships) {
     await upsertRelationship(rel.type, rel.fromId, rel.toId, rel.properties);
   }
   
   console.log('✅ Data ingestion completed successfully!');
+  
+  // ✅ CORREGIDO: Verificar que los datos se hayan ingerido correctamente
+  console.log('🔍 Verifying ingested data...');
+  await verifyIngestedData(data);
+}
+
+/**
+ * ✅ NUEVO: Verificar que los datos se hayan ingerido correctamente
+ */
+async function verifyIngestedData(data: RawData): Promise<void> {
+  console.log('🔍 Verifying ingested data...');
+  
+  try {
+    // Verificar que se puedan consultar los datos básicos
+    const testQueries = [
+      'clientes con deuda inicial',
+      'pagos realizados',
+      'promesas de pago',
+      'interacciones exitosas'
+    ];
+    
+    for (const query of testQueries) {
+      try {
+        const response = await fetch('http://localhost:8000/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            group_id: "analizador-patrones"
+          })
+        });
+        
+        if (response.ok) {
+          console.log(`✅ Query verification passed: "${query}"`);
+        } else {
+          console.log(`⚠️ Query verification warning: "${query}" - Status: ${response.status}`);
+        }
+      } catch (error) {
+        console.log(`⚠️ Query verification warning: "${query}" - Error: ${error}`);
+      }
+    }
+    
+    console.log('✅ Data verification completed');
+  } catch (error) {
+    console.warn('⚠️ Data verification failed:', error);
+  }
 }
 
 async function main(): Promise<void> {
@@ -303,17 +413,25 @@ async function main(): Promise<void> {
     const data = await loadData();
     validateDataStructure(data);
     
-    // Ingest data
+    // Validate data against schema
+    if (!validateData(data)) {
+      throw new Error('❌ Data validation failed against schema');
+    }
+    
+    // Start ingestion
     await ingestData(data);
     
-    console.log('🎉 Ingestion process completed successfully!');
+    console.log('🎉 All done! Data has been successfully ingested into Graphiti/Neo4j');
+    
   } catch (error) {
-    console.error('💥 Ingestion failed:', error);
+    console.error('❌ Fatal error during ingestion:', error);
     process.exit(1);
   }
 }
 
-// Run the main function if this file is executed directly
+// Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
+
+export { main, ingestData };

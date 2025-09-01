@@ -19,6 +19,14 @@ export interface KPIData {
   pagoMedio: number;
   porcentajePagoCompleto: number;
   clientesEnRiesgo: number;
+  // Propiedades adicionales para debugging y análisis
+  totalDeuda: number;
+  totalPagado: number;
+  totalPrometido: number;
+  contactosExitosos: number;
+  pagosInmediatos: number;
+  promesas: number;
+  totalInteracciones: number;
 }
 
 export interface ActivityData {
@@ -103,54 +111,113 @@ export async function extractKPIsFromFacts(facts: GraphitiFact[]): Promise<KPIDa
   let contactosExitosos = 0;
   let pagosInmediatos = 0;
   let promesas = 0;
-  let totalInteracciones = facts.length;
+  let totalInteracciones = 0;
+  let tiempoTotalContacto = 0;
+  let contactosConTiempo = 0;
+  let promesasVencidas = 0;
 
+  // ✅ SOLUCIÓN ALTERNATIVA: Extraer datos de las relaciones de Graphiti
   facts.forEach(factObj => {
-    const fact = factObj.fact;
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado', factObj);
+      return;
+    }
     
-    // Extraer montos de deuda inicial
-    const deudaMatch = fact.match(/deuda_inicial: (\d+)/);
-    if (deudaMatch) totalDeuda += parseInt(deudaMatch[1]);
-
-    // Extraer pagos inmediatos
-    const pagoMatch = fact.match(/monto_pagado: (\d+)/);
-    if (pagoMatch) totalPagado += parseInt(pagoMatch[1]);
-
-    // Extraer promesas de pago
-    const promesaMatch = fact.match(/monto_prometido: (\d+)/);
-    if (promesaMatch) totalPrometido += parseInt(promesaMatch[1]);
-
-    // Contar resultados de interacciones
-    if (fact.includes('resultado: pago_inmediato')) pagosInmediatos++;
-    if (fact.includes('resultado: promesa_pago')) promesas++;
-    if (fact.includes('resultado: contacto_exitoso')) contactosExitosos++;
+    const fact = factObj.fact;
+    const factName = factObj.name;
+    
+    // Contar interacciones basándose en las relaciones
+    if (factName === 'HAD_INTERACTION') {
+      totalInteracciones++;
+      
+      // Extraer resultado de la interacción desde las propiedades de la relación
+      const resultadoMatch = fact.match(/resultado: "([^"]+)"/);
+      if (resultadoMatch && resultadoMatch[1] === 'exitoso') {
+        contactosExitosos++;
+      }
+      
+      // Extraer tiempo de contacto si está disponible
+      const tiempoMatch = fact.match(/tiempo_contacto: (\d+)/);
+      if (tiempoMatch) {
+        tiempoTotalContacto += parseInt(tiempoMatch[1]);
+        contactosConTiempo++;
+      }
+    }
+    
+    // Extraer datos de deuda desde las relaciones OWNS
+    if (factName === 'OWNS') {
+      const deudaMatch = fact.match(/monto_inicial: (\d+)/);
+      if (deudaMatch) {
+        totalDeuda += parseInt(deudaMatch[1]);
+      }
+    }
+    
+    // Extraer datos de pagos desde las relaciones APPLIES_TO
+    if (factName === 'APPLIES_TO') {
+      const pagoMatch = fact.match(/monto_pagado: (\d+)/);
+      if (pagoMatch) {
+        totalPagado += parseInt(pagoMatch[1]);
+        pagosInmediatos++;
+      }
+    }
+    
+    // Extraer datos de promesas desde las relaciones RESULTED_IN
+    if (factName === 'RESULTED_IN') {
+      const promesaMatch = fact.match(/monto_prometido: (\d+)/);
+      if (promesaMatch) {
+        totalPrometido += parseInt(promesaMatch[1]);
+        promesas++;
+        
+        // Verificar si la promesa está vencida
+        const fechaMatch = fact.match(/fecha_promesa: "([^"]+)"/);
+        if (fechaMatch) {
+          const fechaPromesa = new Date(fechaMatch[1]);
+          const hoy = new Date();
+          if (fechaPromesa < hoy) {
+            promesasVencidas++;
+          }
+        }
+      }
+    }
   });
 
-  // Calcular métricas
+  // Calcular métricas derivadas
   const tasaRecuperacion = totalDeuda > 0 ? (totalPagado / totalDeuda) * 100 : 0;
   const promesasCumplidas = totalPrometido > 0 ? (totalPagado / totalPrometido) * 100 : 0;
-  const promesasIncumplidas = Math.max(0, totalPrometido - totalPagado);
   const contactabilidad = totalInteracciones > 0 ? (contactosExitosos / totalInteracciones) * 100 : 0;
-  const pagoMedio = pagosInmediatos > 0 ? totalPagado / pagosInmediatos : 0;
-  const porcentajePagoCompleto = totalDeuda > 0 ? (totalPagado / totalDeuda) * 100 : 0;
+  const tiempoMedioContacto = contactosConTiempo > 0 ? tiempoTotalContacto / contactosConTiempo : 0;
+  const clientesEnRiesgo = promesasVencidas;
 
-  // Calcular clientes en riesgo (simplificado)
-  const clientesEnRiesgo = Math.floor(totalInteracciones * 0.1); // 10% de las interacciones
-
-  // Tiempo medio de contacto (simplificado)
-  const tiempoMedioContacto = 24; // horas
-
-  logger.info('API', `KPIs extraídos: Deuda=${totalDeuda}, Pagado=${totalPagado}, Prometido=${totalPrometido}`);
+  logger.info('API', 'KPIs extraídos de facts de Graphiti', {
+    totalDeuda,
+    totalPagado,
+    totalPrometido,
+    contactosExitosos,
+    pagosInmediatos,
+    promesas,
+    totalInteracciones,
+    tiempoMedioContacto,
+    clientesEnRiesgo
+  });
 
   return {
     tasaRecuperacion: Math.round(tasaRecuperacion * 100) / 100,
     promesasCumplidas: Math.round(promesasCumplidas * 100) / 100,
-    promesasIncumplidas: Math.round(promesasIncumplidas * 100) / 100,
+    promesasIncumplidas: Math.round(Math.max(0, totalPrometido - totalPagado) * 100) / 100,
     contactabilidad: Math.round(contactabilidad * 100) / 100,
-    tiempoMedioContacto,
-    pagoMedio: Math.round(pagoMedio * 100) / 100,
-    porcentajePagoCompleto: Math.round(porcentajePagoCompleto * 100) / 100,
-    clientesEnRiesgo
+    tiempoMedioContacto: Math.round(tiempoMedioContacto * 100) / 100,
+    pagoMedio: Math.round(totalPagado > 0 ? totalPagado / pagosInmediatos : 0 * 100) / 100,
+    porcentajePagoCompleto: Math.round(totalDeuda > 0 ? (totalPagado / totalDeuda) * 100 : 0 * 100) / 100,
+    clientesEnRiesgo,
+    // Propiedades adicionales para debugging y análisis
+    totalDeuda,
+    totalPagado,
+    totalPrometido,
+    contactosExitosos,
+    pagosInmediatos,
+    promesas,
+    totalInteracciones
   };
 }
 
@@ -160,19 +227,28 @@ export async function extractActivityFromFacts(facts: GraphitiFact[]): Promise<A
   let promesas = 0;
   let renegociaciones = 0;
   let sinRespuesta = 0;
+  let totalInteracciones = 0;
 
   facts.forEach(factObj => {
-    const fact = factObj.fact;
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en actividad', factObj);
+      return;
+    }
     
-    if (fact.includes('resultado: contacto_exitoso')) contactosExitosos++;
-    else if (fact.includes('resultado: pago_inmediato')) pagosInmediatos++;
-    else if (fact.includes('resultado: promesa_pago')) promesas++;
-    else if (fact.includes('resultado: renegociacion')) renegociaciones++;
-    else if (fact.includes('resultado: sin_respuesta')) sinRespuesta++;
+    const fact = factObj.fact;
+    totalInteracciones++;
+    
+    // Contar resultados de interacciones con patrones más flexibles
+    if (fact.toLowerCase().includes('contacto_exitoso')) contactosExitosos++;
+    else if (fact.toLowerCase().includes('pago_inmediato')) pagosInmediatos++;
+    else if (fact.toLowerCase().includes('promesa_pago')) promesas++;
+    else if (fact.toLowerCase().includes('renegociacion')) renegociaciones++;
+    else if (fact.toLowerCase().includes('sin_respuesta')) sinRespuesta++;
   });
 
   return {
-    totalInteracciones: facts.length,
+    totalInteracciones,
     contactosExitosos,
     pagosInmediatos,
     promesas,
@@ -197,6 +273,12 @@ export async function extractBestHoursFromFacts(facts: GraphitiFact[]): Promise<
   });
 
   facts.forEach(factObj => {
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en mejores horas', factObj);
+      return;
+    }
+    
     const fact = factObj.fact;
     const timeMatch = fact.match(/fecha_hora: "([^"]+)"/);
     if (timeMatch) {
@@ -209,9 +291,9 @@ export async function extractBestHoursFromFacts(facts: GraphitiFact[]): Promise<
         daySlots[day].total++;
 
         // Considerar exitoso si es contacto exitoso, pago o promesa
-        if (fact.includes('resultado: contacto_exitoso') || 
-            fact.includes('resultado: pago_inmediato') || 
-            fact.includes('resultado: promesa_pago')) {
+        if (fact.toLowerCase().includes('contacto_exitoso') || 
+            fact.toLowerCase().includes('pago_inmediato') || 
+            fact.toLowerCase().includes('promesa_pago')) {
           timeSlots[hour].success++;
           daySlots[day].success++;
         }
@@ -243,27 +325,34 @@ export async function extractBestHoursFromFacts(facts: GraphitiFact[]): Promise<
 }
 
 export async function extractFunnelFromFacts(facts: GraphitiFact[]): Promise<FunnelData> {
-  let intentos = facts.length;
+  let intentos = 0;
   let respuestas = 0;
   let promesas = 0;
   let pagos = 0;
   let pagosCompletos = 0;
 
   facts.forEach(factObj => {
-    const fact = factObj.fact;
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en funnel', factObj);
+      return;
+    }
     
-    if (fact.includes('resultado: contacto_exitoso') || 
-        fact.includes('resultado: pago_inmediato') || 
-        fact.includes('resultado: promesa_pago') ||
-        fact.includes('resultado: renegociacion')) {
+    const fact = factObj.fact;
+    intentos++;
+    
+    if (fact.toLowerCase().includes('contacto_exitoso') || 
+        fact.toLowerCase().includes('pago_inmediato') || 
+        fact.toLowerCase().includes('promesa_pago') ||
+        fact.toLowerCase().includes('renegociacion')) {
       respuestas++;
     }
     
-    if (fact.includes('resultado: promesa_pago')) {
+    if (fact.toLowerCase().includes('promesa_pago')) {
       promesas++;
     }
     
-    if (fact.includes('resultado: pago_inmediato')) {
+    if (fact.toLowerCase().includes('pago_inmediato')) {
       pagos++;
       pagosCompletos++; // Simplificado: pago inmediato = pago completo
     }
@@ -282,6 +371,12 @@ export async function extractAgentsFromFacts(facts: GraphitiFact[]): Promise<Age
   const agentStats: { [key: string]: { promesas: number; pagos: number; montoTotal: number } } = {};
 
   facts.forEach(factObj => {
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en agentes', factObj);
+      return;
+    }
+    
     const fact = factObj.fact;
     const agenteMatch = fact.match(/agente_id: "([^"]+)"/);
     if (agenteMatch) {
@@ -291,17 +386,17 @@ export async function extractAgentsFromFacts(facts: GraphitiFact[]): Promise<Age
         agentStats[agenteId] = { promesas: 0, pagos: 0, montoTotal: 0 };
       }
 
-      if (fact.includes('resultado: promesa_pago')) {
+      if (fact.toLowerCase().includes('promesa_pago')) {
         agentStats[agenteId].promesas++;
-        const montoMatch = fact.match(/monto_prometido: (\d+)/);
+        const montoMatch = fact.match(/monto_prometido[:\s]+(\d+)/i);
         if (montoMatch) {
           agentStats[agenteId].montoTotal += parseInt(montoMatch[1]);
         }
       }
 
-      if (fact.includes('resultado: pago_inmediato')) {
+      if (fact.toLowerCase().includes('pago_inmediato')) {
         agentStats[agenteId].pagos++;
-        const montoMatch = fact.match(/monto_pagado: (\d+)/);
+        const montoMatch = fact.match(/monto_pagado[:\s]+(\d+)/i);
         if (montoMatch) {
           agentStats[agenteId].montoTotal += parseInt(montoMatch[1]);
         }
@@ -323,12 +418,18 @@ export async function extractPromisesRiskFromFacts(facts: GraphitiFact[]): Promi
   const promises: PromiseRiskData[] = [];
 
   facts.forEach(factObj => {
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en promesas de riesgo', factObj);
+      return;
+    }
+    
     const fact = factObj.fact;
     
-    if (fact.includes('resultado: promesa_pago')) {
+    if (fact.toLowerCase().includes('promesa_pago')) {
       const promesaMatch = fact.match(/id: "([^"]+)"/);
       const clienteMatch = fact.match(/cliente_id: "([^"]+)"/);
-      const montoMatch = fact.match(/monto_prometido: (\d+)/);
+      const montoMatch = fact.match(/monto_prometido[:\s]+(\d+)/i);
       const fechaMatch = fact.match(/fecha_promesa: "([^"]+)"/);
 
       if (promesaMatch && clienteMatch && montoMatch && fechaMatch) {
@@ -366,13 +467,19 @@ export async function extractSentimentFromFacts(facts: GraphitiFact[]): Promise<
   let friccion = 0;
 
   facts.forEach(factObj => {
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en sentimiento', factObj);
+      return;
+    }
+    
     const fact = factObj.fact;
     
-    if (fact.includes('resultado: pago_inmediato') || fact.includes('resultado: promesa_pago')) {
+    if (fact.toLowerCase().includes('pago_inmediato') || fact.toLowerCase().includes('promesa_pago')) {
       positivo++;
-    } else if (fact.includes('resultado: contacto_exitoso')) {
+    } else if (fact.toLowerCase().includes('contacto_exitoso')) {
       neutral++;
-    } else if (fact.includes('resultado: sin_respuesta') || fact.includes('resultado: renegociacion')) {
+    } else if (fact.toLowerCase().includes('sin_respuesta') || fact.toLowerCase().includes('renegociacion')) {
       negativo++;
       friccion++;
     }
@@ -393,6 +500,12 @@ export async function extractLastActivityFromFacts(facts: GraphitiFact[]): Promi
   let clienteActivo = '';
 
   facts.forEach(factObj => {
+    // Validar fact
+    if (!factObj || !factObj.fact) {
+      logger.warn('API', 'Fact inválido encontrado en última actividad', factObj);
+      return;
+    }
+    
     const fact = factObj.fact;
     const timeMatch = fact.match(/fecha_hora: "([^"]+)"/);
     const clienteMatch = fact.match(/cliente_id: "([^"]+)"/);
@@ -405,13 +518,13 @@ export async function extractLastActivityFromFacts(facts: GraphitiFact[]): Promi
         if (clienteMatch) clienteActivo = clienteMatch[1];
       }
 
-      if (fact.includes('resultado: pago_inmediato')) {
+      if (fact.toLowerCase().includes('pago_inmediato')) {
         if (!ultimoPago || timestamp > ultimoPago) {
           ultimoPago = timestamp;
         }
       }
 
-      if (fact.includes('resultado: promesa_pago')) {
+      if (fact.toLowerCase().includes('promesa_pago')) {
         if (!ultimaPromesa || timestamp > ultimaPromesa) {
           ultimaPromesa = timestamp;
         }

@@ -2,12 +2,19 @@
   "name": "@analizador-patrones/ingest",
   "version": "1.0.0",
   "type": "module",
-  "description": "Data ingestion and validation for analizador-patrones",
+  "description": "Data ingestion and validation for analizador-patrones - CORREGIDO",
   "main": "dist/index.js",
   "scripts": {
     "start": "tsx src/index.ts",
     "build": "tsc",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "setup": "./setup-ingestion.sh",
+    "reset": "./reset-ingestion.sh",
+    "test": "tsx src/test-dashboard.ts",
+    "verify": "tsx src/verify-ingestion.ts",
+    "clean": "rm -rf dist",
+    "rebuild": "npm run clean && npm run build",
+    "full-reset": "./reset-ingestion.sh && ./setup-ingestion.sh"
   },
   "dependencies": {
     "ajv": "^8.12.0",
@@ -16,7 +23,10 @@
   },
   "devDependencies": {
     "tsx": "^4.7.0",
-    "typescript": "^5.3.0",
+    "typescript": "^4.9.0",
     "@types/node": "^20.10.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }

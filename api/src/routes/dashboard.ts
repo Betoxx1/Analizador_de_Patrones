@@ -32,9 +32,13 @@ function calculateDelta(current: number, previous: number): number {
 // 1. KPIs del Dashboard
 export async function getDashboardKPIs(req: Request, res: Response): Promise<void> {
   try {
-    const { /*desde,*/ hasta, tipo_deuda, agente_id } = req.query as unknown as DashboardQueryParams;
-    const desde = "2016-01-01"
-    if (desde && hasta && !validateDateRange(desde, hasta)) {
+    const { desde, hasta, tipo_deuda, agente_id } = req.query as unknown as DashboardQueryParams;
+    
+    // Usar fecha del query parameter con fallback más inteligente
+    const fechaDesde = desde || "2023-09-01"; // Basado en los datos del archivo JSON
+    const fechaHasta = hasta || new Date().toISOString().split('T')[0];
+    
+    if (!validateDateRange(fechaDesde, fechaHasta)) {
       res.status(400).json({
         error: 'Invalid date range',
         message: 'desde and hasta must be valid dates in YYYY-MM-DD format'
@@ -42,19 +46,21 @@ export async function getDashboardKPIs(req: Request, res: Response): Promise<voi
       return;
     }
 
-    logger.info('API', 'Fetching dashboard KPIs', { desde, hasta, tipo_deuda, agente_id });
+    logger.info('API', 'Fetching dashboard KPIs', { fechaDesde, fechaHasta, tipo_deuda, agente_id });
 
-    // Construir query semántica para Graphiti
-    const query = buildDynamicQuery({ desde, hasta, tipo_deuda, agente_id });
+    // Construir query más específica
+    const baseQuery = buildDynamicQuery({ desde: fechaDesde, hasta: fechaHasta, tipo_deuda, agente_id });
+    const kpisQuery = GRAPHITI_QUERIES.kpis;
+    const finalQuery = `${baseQuery} ${kpisQuery}`;
     
     // Obtener datos de Graphiti
     const result = await searchGraph({ 
-      query: query + " " + GRAPHITI_QUERIES.kpis,
+      query: finalQuery,
       group_id: "analizador-patrones"
     });
 
     if (!result || !result.facts || result.facts.length === 0) {
-      logger.warn('API', 'No facts returned from Graphiti for KPIs');
+      logger.warn('API', 'No facts returned from Graphiti for KPIs', { query: finalQuery });
       res.status(404).json({
         error: 'No data available',
         message: 'No dashboard data found for the specified criteria'
@@ -70,7 +76,7 @@ export async function getDashboardKPIs(req: Request, res: Response): Promise<voi
       data: dashboardData.kpis,
       metadata: {
         totalFacts: result.facts.length,
-        query: query,
+        query: finalQuery,
         timestamp: new Date().toISOString()
       }
     });

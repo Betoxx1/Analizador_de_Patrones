@@ -2,8 +2,19 @@ export const GRAPHITI_QUERIES = {
   // Query principal para obtener todos los datos del dashboard
   dashboard: "interacciones clientes deuda inicial pagos inmediatos promesas de pago contactos exitosos agentes fechas horas",
   
-  // Queries específicas para cada sección
-  kpis: "clientes con deuda inicial, interacciones con pagos inmediatos, promesas de pago, contactos exitosos, montos pagados y prometidos",
+  // Query mejorada para KPIs - más específica y estructurada
+  kpis: `
+    extraer métricas financieras específicas:
+    - deuda inicial total de todos los clientes
+    - montos totales pagados por los clientes
+    - montos totales prometidos en promesas de pago
+    - tasa de recuperación (pagos / deuda inicial)
+    - promesas cumplidas vs promesas incumplidas
+    - efectividad de cobranza por agente
+    - contactabilidad (interacciones exitosas / total interacciones)
+    - tiempo medio de contacto
+    - clientes en riesgo de incumplimiento
+  `,
   
   activity: "interacciones por fecha y hora, tipos de contacto (llamada, email, sms), resultados (pago_inmediato, promesa_pago, contacto_exitoso, renegociacion, sin_respuesta)",
   
